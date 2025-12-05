@@ -57,44 +57,42 @@ SOFTWARE.
 // until this is solved.
 
 #include <Arduino.h>
+#include "kvm.h"
 #include "CH9329.h"
 CH9329 *CH9329Client;
 
-#include "FreeRTOS.h"           // 包含 FreeRTOS 头文件
-#include "semphr.h"             // 包含信号量和互斥锁相关的头文件
+#include "FreeRTOS.h" // 包含 FreeRTOS 头文件
+#include "semphr.h"   // 包含信号量和互斥锁相关的头文件
+#include <task.h>
 SemaphoreHandle_t ch9329_mutex; // 声明一个互斥锁句柄
+// 定义发送字符的任务句柄
+TaskHandle_t Serial2SendGetInfoTaskHandle = NULL;
 
 struct CH9329CFG ch9329cfgs[CH9329COUNT] = {
-    {.led_pin = 2,
-     .rx_pin = 8,
-     .tx_pin = 9,
-     .cfg1_pin = 10,
-     .mode1_pin = 11,
-     .addr = 0x30,
-     .baud = 9600,
-     .CFG1 = HIGH,
-     .MODE1 = HIGH},
-    {.led_pin = 28,
-     .rx_pin = 8,
-     .tx_pin = 9,
-     .cfg1_pin = 27,
-     .mode1_pin = 26,
-     .addr = 0x01,
-     .baud = 9600,
-     .CFG1 = HIGH,
-     .MODE1 = HIGH}};
+    {
+        .led_pin = 2,
+        .rx_pin = 8,
+        .tx_pin = 9,
+        .cfg1_pin = 10,
+        .mode1_pin = 11,
+        .addr = 0x30,
+        .baud = 115200,
+        .CFG1 = HIGH,
+        .MODE1 = LOW // LOW: 注：Linux/Android/macOS等操作系统下，建议使用该模式。
+    },
+    {
+        .led_pin = 28,
+        .rx_pin = 8,
+        .tx_pin = 9,
+        .cfg1_pin = 27,
+        .mode1_pin = 26,
+        .addr = 0x01,
+        .baud = 115200,
+        .CFG1 = HIGH,
+        .MODE1 = LOW // LOW: 注：Linux/Android/macOS等操作系统下，建议使用该模式。
+    }};
 
-#define USB_DEBUG 1
-
-#if USB_DEBUG
-#define DBG_print(...) Serial.print(__VA_ARGS__)
-#define DBG_println(...) Serial.println(__VA_ARGS__)
-#define DBG_printf(...) Serial.printf(__VA_ARGS__)
-#else
-#define DBG_print(...)
-#define DBG_println(...)
-#define DBG_printf(...)
-#endif
+//#define USB_DEBUG 1
 
 // pio-usb is required for rp2040 host
 #include "pio_usb.h"
@@ -200,22 +198,43 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
     }
     // DBG_printf("mouse moved to x=%d, y=%d\r\n", mouseRpt.x, mouseRpt.y);
 
+    judge_kvm_mode(CH9329Client->isUSBConnected(0),
+                   CH9329Client->isUSBConnected(1),
+                   mouseRpt.x, mouseRpt.y);
     // 使用互斥锁保护 mouseMove 调用
-    if (xSemaphoreTake(ch9329_mutex, pdMS_TO_TICKS(10)) == pdTRUE)
+    if (xSemaphoreTake(ch9329_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
     { // 设置10ms超时
-      for (int i = 0; i < CH9329COUNT; i++)
+      switch (current_status.mode)
       {
-        if (CH9329Client->isUSBConnected(i))
-        {
-          CH9329Client->mouseMove(i, mouseRpt.x, mouseRpt.y, mouseRpt.buttons, mouseRpt.wheel);
-        }
+      case KVM_MODE_NONE:
+        CH9329Client->turnOffLed(0);
+        CH9329Client->turnOffLed(1);
+        /* code */
+        break;
+      case KVM_MODE_LEFT_ONLY:
+      case KVM_MODE_RIGHT_ONLY:
+        CH9329Client->turnOnLed(current_status.active_screen);
+        CH9329Client->turnOffLed(!current_status.active_screen);
+        CH9329Client->mouseMove(current_status.active_screen, mouseRpt.x, mouseRpt.y, mouseRpt.buttons, mouseRpt.wheel);
+        break;
+      case KVM_MODE_ON_LEFT:
+      case KVM_MODE_ON_RIGHT:
+        CH9329Client->turnOnLed(current_status.active_screen);
+        CH9329Client->turnOffLed(!current_status.active_screen);
+        CH9329Client->mouseMoveAbs(current_status.active_screen,
+                                   convert_to_abs_pos_x(current_status.current_mouse_x),
+                                   convert_to_abs_pos_y(current_status.current_mouse_y),
+                                   mouseRpt.buttons,
+                                   mouseRpt.wheel);
+        CH9329Client->mousePress(current_status.active_screen, mouseRpt.buttons);
+        CH9329Client->mouseWheel(current_status.active_screen, mouseRpt.wheel);
+        break;
+      default:
+        break;
       }
       xSemaphoreGive(ch9329_mutex);
     }
-    else
-    {
-      // DBG_println("Warning: Could not get mutex in callback!");
-    }
+    
   }
   else
   {
@@ -230,18 +249,62 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
   }
 }
 
+/**
+ * 任务函数: 每500ms向 Serial2 发送一个字符
+ */
+void Serial2SendGetInfoTask(void *pvParameters)
+{
+  // 获取锁
+  if (xSemaphoreTake(ch9329_mutex, portMAX_DELAY) == pdTRUE)
+  {
+    for (int i = 0; i < CH9329COUNT; i++)
+    {
+      CH9329Client->cmdReset(i);
+      vTaskDelay(pdMS_TO_TICKS(10));
+      DBG_printf("CH9329[%d] inited.\r\n", i);
+    }
+    // 释放锁
+    xSemaphoreGive(ch9329_mutex);
+  }
+  while (1)
+  {
+
+    // 获取锁
+    if (xSemaphoreTake(ch9329_mutex, portMAX_DELAY) == pdTRUE)
+    {
+      for (int i = 0; i < CH9329COUNT; i++)
+      {
+        CH9329Client->cmdGetInfo(i);
+        vTaskDelay(pdMS_TO_TICKS(20));
+        CH9329Client->readUart();
+      }
+      // 释放锁
+      xSemaphoreGive(ch9329_mutex);
+    }
+    // 延时 500 毫秒
+    vTaskDelay(pdMS_TO_TICKS(5000));
+
+    // // 尝试获取互斥锁，等待无限长时间
+    // if (xSemaphoreTake(ch9329_mutex, portMAX_DELAY) == pdTRUE)
+    // {
+    //   // 成功获取锁，可以安全地访问 CH9329Client
+    //   CH9329Client->readUart();
+
+    //   // 操作完成后，必须释放互斥锁
+    //   xSemaphoreGive(ch9329_mutex);
+    // }
+    // vTaskDelay(pdMS_TO_TICKS(500));
+  }
+}
+
 //--------------------------------------------------------------------+
 // Setup and Loop on Core0
 //--------------------------------------------------------------------+
 
 void setup()
 {
-#if USB_DEBUG
   Serial.begin(115200);
   DBG_println("Serial inited.");
-#else
-  Serial.end();
-#endif
 
   // 创建一个互斥信号量
   ch9329_mutex = xSemaphoreCreateMutex();
@@ -254,21 +317,16 @@ void setup()
   }
 
   CH9329Client = new CH9329(&Serial2, ch9329cfgs);
-
-  // 获取锁
-  if (xSemaphoreTake(ch9329_mutex, portMAX_DELAY) == pdTRUE)
-  {
-    for (int i = 0; i < CH9329COUNT; i++)
-    {
-      CH9329Client->cmdReset(i);
-      delay(10);
-      CH9329Client->cmdGetInfo(i);
-      delay(10);
-      DBG_printf("CH9329[%d] inited.\r\n", i);
-    }
-    // 释放锁
-    xSemaphoreGive(ch9329_mutex);
-  }
+  // 创建任务
+  // 参数: 任务函数, 任务名称, 堆栈大小, 传递给任务的参数,
+  // 任务优先级 (tskIDLE_PRIORITY + 1 是一个较低的优先级), 任务句柄
+  xTaskCreate(
+      Serial2SendGetInfoTask,
+      "Serial2SendGetInfoTask",
+      1024, // 堆栈大小可以根据需要调整
+      NULL,
+      tskIDLE_PRIORITY + 1, // 低优先级
+      &Serial2SendGetInfoTaskHandle);
 
   // CH9329Client->readUart();
   // wait until device mounted
@@ -279,17 +337,6 @@ void setup()
 
 void loop()
 {
-
-  // 尝试获取互斥锁，等待无限长时间
-  if (xSemaphoreTake(ch9329_mutex, portMAX_DELAY) == pdTRUE)
-  {
-    // 成功获取锁，可以安全地访问 CH9329Client
-    CH9329Client->readUart();
-
-    // 操作完成后，必须释放互斥锁
-    xSemaphoreGive(ch9329_mutex);
-  }
-  delay(10);
 }
 
 //--------------------------------------------------------------------+
@@ -333,4 +380,7 @@ void setup1()
 void loop1()
 {
   USBHost.task();
+  if(BOOTSEL){
+    rp2040.rebootToBootloader();
+  }
 }
