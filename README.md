@@ -1,29 +1,17 @@
-# USB Boot Mouse Pass Through
+# A simple KVM with Pico and 2xCH9329
 
-Simple demonstration of passing USB mouse HID boot reports from a USB mouse
-through to a computer.
+A simple KVM with Pico and 2xCH9329 chips which offers auto switch screens by moving mouse.
+Something like deskhop[https://github.com/hrvach/deskhop]
 
 ## Hardware
 
-For Adafruit RP2040 Feather USB Host board. The board supports USB host and
-device at the same time. Lots more information at
-https://learn.adafruit.com/adafruit-feather-rp2040-with-usb-type-a-host.
-
-* Adafruit Feather RP2040 with USB Type A Host
-
-## Dependencies
-
-Use this board package.
-
-* https://github.com/earlephilhower/arduino-pico
-
-The following libraries can be installed using the IDE library manager.
-
-* "Adafruit TinyUSB Library" by Adafruit
-* "Pico PIO USB" by sekigon-gonnoc
+* 1x Pico(RP2040)
+* 2x CH9329
+* 2x USB Type A Port
+* 2x USB Type C Port
+* 2x LEDs
 
 ## IDE Tools options required
 
-* Set "Board" to "Adafruit Feather RP2040 USB Host"
-* Set "USB Stack" to "Adafruit TinyUSB"
+* Use PlatformIO
 * Set "CPU Speed" to 120MHz.

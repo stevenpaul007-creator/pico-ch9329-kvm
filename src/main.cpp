@@ -145,12 +145,10 @@ static void process_mouse_report(hid_mouse_report_t const *report)
   {
   case KVM_MODE_LEFT_ONLY:
   case KVM_MODE_RIGHT_ONLY:
-    CH9329Client->turnOffLed(!current_status.active_screen);
     CH9329Client->mouseMove(current_status.active_screen, report->x, report->y, report->buttons, report->wheel);
     break;
   case KVM_MODE_ON_LEFT:
   case KVM_MODE_ON_RIGHT:
-    CH9329Client->turnOffLed(!current_status.active_screen);
     CH9329Client->mouseMoveAbs(current_status.active_screen,
                                convert_to_abs_pos_x(current_status.current_mouse_x),
                                convert_to_abs_pos_y(current_status.current_mouse_y),
@@ -219,6 +217,7 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 {
   uint8_t type = tuh_hid_interface_protocol(dev_addr, instance);
 
+#ifdef USB_DEBUG
   // 打印接收到的数据长度和类型
   DBG_printf("Received Report: Type=%02X, Length=%u\r\n", type, len);
 
@@ -229,6 +228,7 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
     DBG_printf("%02X ", report[i]);
   }
   DBG_printf("\r\n");
+#endif
 
   hid_report_t new_report;
   new_report.type = type;
@@ -284,6 +284,7 @@ void setBoardLEDs_cb(KVM_MODE mode)
     break;
   default:
     CH9329Client->turnOnLed(current_status.active_screen);
+    CH9329Client->turnOffLed(!current_status.active_screen);
     break;
   }
 }
@@ -306,13 +307,13 @@ void mouseFromRightToLeft_cb()
                              0, 0);
 }
 
-// 新增任务：LED 闪烁任务（中等优先级）
-void led_task()
+// 新增任务：LED 闪烁任务
+void ledTask()
 {
   gpio_xor_mask(1U << LED_BUILTIN); // LED 开关
 }
 /**
- * 任务函数: 每500ms向 Serial2 发送一个字符
+ * 任务函数: 按下BootSel按钮
  */
 void BootSelTask()
 {
@@ -331,7 +332,7 @@ void resetCH9329Task()
   }
 }
 /**
- * 任务函数: 每500ms向 Serial2 发送一个字符
+ * 任务函数: 每500ms向 Serial2 发送获取状态
  */
 void Serial2SendGetInfoTask()
 {
@@ -452,7 +453,7 @@ void loop()
   if (currentMillis - previousMillis0 >= 500)
   {
     Serial2SendGetInfoTask();
-    led_task();
+    ledTask();
     previousMillis0 = currentMillis;
   }
   if (currentMillis - previousMillis2 >= 1000)
