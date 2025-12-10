@@ -160,8 +160,8 @@ static void process_mouse_report(hid_mouse_report_t const *report)
     CH9329Client->mouseMoveAbs(current_status.active_screen,
                                convert_to_abs_pos_x(current_status.current_mouse_x),
                                convert_to_abs_pos_y(current_status.current_mouse_y),
-                               report->buttons,
-                               report->wheel);
+                               0,
+                               0);
     // CH9329 click and wheel are not working under linux and android.
     CH9329Client->mouseMove(current_status.active_screen,
                             0,
