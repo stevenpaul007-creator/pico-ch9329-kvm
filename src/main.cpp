@@ -133,6 +133,34 @@ static void process_usb_mount_report(hid_report_t *report)
 
 static void process_kbd_report(hid_keyboard_report_t const *report)
 {
+  // check should trigger gaming mode
+  // 1. check (Ctrl, Shift, Alt) pressed at same time
+  bool has_ctrl  = (report->modifier & 0x11) != 0; // 0x01 | 0x10
+  bool has_shift = (report->modifier & 0x22) != 0; // 0x02 | 0x20
+  bool has_alt   = (report->modifier & 0x44) != 0; // 0x04 | 0x40
+
+  // 2. check g pressed
+  bool has_g = false;
+  for (int i = 0; i < 6; i++) {
+    if (report->keycode[i] == 0x0A) {
+      has_g = true;
+      break;
+    }
+  }
+
+  // 3. 条件满足
+  if (has_ctrl && has_shift && has_alt && has_g) {
+    triggerGamingMode();
+   
+    for (size_t i = 0; i < CH9329COUNT; i++)
+    {
+      CH9329Client->releaseAll(i);
+      CH9329Client->mouseRelease(i);
+    }
+    delay(1000);
+    return;
+  }
+ 
   CH9329Client->press(current_status.active_screen,
                       report->modifier,
                       report->keycode[0],
