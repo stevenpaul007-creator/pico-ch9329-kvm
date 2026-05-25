@@ -227,7 +227,7 @@ static void removeKeyboard(uint8_t dev_addr, uint8_t instance)
     }
 }
 
-static void triggerGameMode(){
+static void triggerGamingMode(){
     current_status.gamingMode = !current_status.gamingMode;
 
     // when on gaming mode and on left, should always on left
