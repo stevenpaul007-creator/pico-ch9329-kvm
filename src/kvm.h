@@ -10,11 +10,11 @@
 
 enum KVM_MODE
 {
-    KVM_MODE_NONE = 0,
-    KVM_MODE_LEFT_ONLY,
-    KVM_MODE_RIGHT_ONLY,
-    KVM_MODE_ON_LEFT,
-    KVM_MODE_ON_RIGHT
+    KVM_MODE_NONE = 0,          // Not connected
+    KVM_MODE_LEFT_ONLY,         // only left is connected
+    KVM_MODE_RIGHT_ONLY,        // only right is connected
+    KVM_MODE_ON_LEFT,           // both connected but mouse is on left
+    KVM_MODE_ON_RIGHT           // both connected but mouse is on right
 };
 
 enum SCREEN
@@ -35,6 +35,7 @@ struct current_status
     uint8_t keyboardCount = 0;
     bool prevLeftUSBConnected = false;
     bool prevRightUSBConnected = false;
+    bool gamingMode = false;
     struct keyboardlist
     {
         uint8_t dev_addr;
@@ -96,18 +97,22 @@ static void judge_kvm_mode(bool leftUSBConnected,
     if (!leftUSBConnected && !rightUSBConnected)
     {
         current_status.mode = KVM_MODE_NONE;
+        current_status.gamingMode = false;    // clear gaming mode when no connections.
     }
     else if (!leftUSBConnected && rightUSBConnected)
     {
         current_status.active_screen = SCREEN_RIGHT;
         current_status.mode = KVM_MODE_RIGHT_ONLY;
+        current_status.gamingMode = false;    // clear gaming mode when 1 connection.
     }
     else if (leftUSBConnected && !rightUSBConnected)
     {
         current_status.active_screen = SCREEN_LEFT;
         current_status.mode = KVM_MODE_LEFT_ONLY;
+        current_status.gamingMode = false;    // clear gaming mode when 1 connection.
     }
-    else if (leftUSBConnected && rightUSBConnected)
+    // both connected and not in gaming mode
+    else if (leftUSBConnected && rightUSBConnected && !current_status.gamingMode)
     {
 #ifdef USB_DEBUG_SENSITIVE
         DBG_printf("leftUSBConnected = %02X, rightUSBConnected= %02X mouseRelX= %02X mouseRelY= %02X\r\n",
@@ -219,5 +224,20 @@ static void removeKeyboard(uint8_t dev_addr, uint8_t instance)
             current_status.keyboardCount = max(current_status.keyboardCount, 0);
             return;
         }
+    }
+}
+
+static void triggerGameMode(){
+    current_status.gamingMode = !current_status.gamingMode;
+
+    // when on gaming mode and on left, should always on left
+    if(current_status.gamingMode && current_status.mode == KVM_MODE_ON_LEFT){
+        current_status.active_screen = SCREEN_LEFT;
+        current_status.mode = KVM_MODE_LEFT_ONLY;
+    }
+    // when on gaming mode and on right, should always on right
+    else if(current_status.gamingMode && current_status.mode == KVM_MODE_ON_RIGHT){
+        current_status.active_screen = SCREEN_RIGHT;
+        current_status.mode = KVM_MODE_RIGHT_ONLY;
     }
 }
